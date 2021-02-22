@@ -43,7 +43,7 @@ mcols(dnc)$host_name <- mcols(win_par)$name
 mcols(dnc)$host_coord <- mcols(win_par)$host
 mcols(dnc)$host_fpkm <- mcols(win_par)$fpkm
 
-# Load NFR from Chereji et al., 2018 (PMID PMID29426353):
+# Load NFR from Chereji et al., 2018 (PMID 29426353):
 download.file("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5807854/bin/13059_2018_1398_MOESM2_ESM.xlsx", "Chereji2018_NFR.xlsx", method = "curl")
 nfr_tbl <- read_excel("Chereji2018_NFR.xlsx")
 nfr <- GRanges(seqnames = nfr_tbl$Chr, IRanges(start = nfr_tbl$`NDR Center`, width = 0), strand = "*", seqinfo = seqinfo(dnc)) %>% 
