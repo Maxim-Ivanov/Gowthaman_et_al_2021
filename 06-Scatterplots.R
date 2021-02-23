@@ -23,14 +23,14 @@ orc <- file.path(df_dir, "df_orc2.RDS") %>% readRDS()
 gcg <- file.path(df_dir, "df_gcg1.RDS") %>% readRDS()
 
 # Exclude duplicated plates from the ORC2 screen:
-orc <- filter(orc, !str_detect(Plate, "_uthra")) ###########
+#orc <- filter(orc, !str_detect(Plate, "_uthra"))
 
 # Skip one unsuccessful plate from the ORC2 screen:
-orc <- filter(orc, Plate != "170223_3-1x49-71") ############
+#orc <- filter(orc, Plate != "170223_3-1x49-71")
 
 # Deduplicate on gene names:
-orc <- filter(orc, !duplicated(Name))
-gcg <- filter(gcg, !duplicated(Name))
+orc <- orc %>% mutate(Name = str_to_upper(Name)) %>% filter(!duplicated(Name))
+gcg <- gcg %>% mutate(Name = str_to_upper(Name)) %>% filter(!duplicated(Name))
 
 # Skip control samples:
 orc <- orc %>% filter(Type == "S" & !Name %in% c("-", "BY4741") & !is.na(YFP_well))
@@ -39,9 +39,12 @@ gcg <- gcg %>% filter(Type == "S" & !Name %in% c("-", "BY4741") & !is.na(YFP_wel
 # Export directionality scores as Tab-delimited files:
 #orc_tbl <- orc %>% as_tibble() %>% select(Name, Geom_dist, Pval_Geom) %>% dplyr::rename(Geom_dist_ORC2 = Geom_dist, Pval_Geom_ORC2 = Pval_Geom)
 #gcg_tbl <- gcg %>% as_tibble() %>% select(Name, Geom_dist, Pval_Geom) %>% dplyr::rename(Geom_dist_GCG1 = Geom_dist, Pval_Geom_GCG1 = Pval_Geom)
-#full_join(orc_tbl, gcg_tbl, by = "Name") %>% write_tsv("ORC2_GCG1_directionality_scores.txt")
+#orc_gcg_tbl <- full_join(orc_tbl, gcg_tbl, by = "Name")
+#temp_tbl <- mcols(genes) %>% as_tibble() %>% select(name, name_2) %>% dplyr::rename(Name = name, Name_2 = name_2)
+#orc_gcg_tbl <- left_join(orc_gcg_tbl, temp_tbl, by = "Name") %>% select(Name, Name_2, everything())
+#write_tsv(orc_gcg_tbl, "ORC2_GCG1_directionality_scores.txt")
 
-# Add favorite genes:
+# Add the favorite genes:
 fav <- read_tsv("Genes_to_highlight_on_scatterplots.txt")
 orc <- left_join(orc, fav, by = "Name")
 gcg <- left_join(gcg, fav, by = "Name")

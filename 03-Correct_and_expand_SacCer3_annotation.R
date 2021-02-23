@@ -198,10 +198,10 @@ add_tss_or_pas_info <- function(genes, tc, mode) {
 ##### Load SacCer3 genes from SGD -----------------------------------------------------------------------
 
 # (the annotation available from Bioconductor library TxDb.Scerevisiae.UCSC.sacCer3.sgdGene is not good, because it lacks ncRNA genes)
-download.file("http://sgd-archive.yeastgenome.org/curation/chromosomal_feature/archive/saccharomyces_cerevisiae.20170114.gff.gz", "SacCer3_SGD.gff.gz")
+download.file("http://sgd-archive.yeastgenome.org/curation/chromosomal_feature/archive/saccharomyces_cerevisiae.20170114.gff.gz", "SacCer3_SGD.gff.gz", method = "curl")
 gff <- import("SacCer3_SGD.gff.gz", format = "GFF3")
-mcols(gff) <- mcols(gff)[, c("type", "Name")]
-names(mcols(gff)) <- names(mcols(gff)) %>% str_replace("Name", "name")
+mcols(gff) <- mcols(gff)[, c("type", "Name", "gene")]
+names(mcols(gff)) <- names(mcols(gff)) %>% str_replace("Name", "name") %>% str_replace("gene", "name_2")
 gff <- gff %>% sortSeqlevels() %>% sort()
 seqinfo(gff, new2old = as.integer(1:17)) <- seqinfo(txdb)
 genes_gff <- gff[grepl("gene", mcols(gff)$type)]
@@ -210,7 +210,7 @@ mcols(genes_gff)$type <- mcols(genes_gff)$type %>% droplevels()
 # Load CUTs and SUTs from Xu et al. 2009 (PMID 19169243):
 # (download archive from https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2766638/bin/NIHMS137055-supplement-supZip.zip and unzip it)
 xu <- read_excel("SI_Tab3.xls", sheet = 1) %>% dplyr::select(chr, start, end, strand, type, name) %>% filter(type %in% c("CUTs", "SUTs")) # Supplementary Table 3
-xu <- GRanges(seqnames = xu$chr, IRanges(xu$start, end = xu$end), strand = xu$strand, type = xu$type, name = xu$name)
+xu <- GRanges(seqnames = xu$chr, IRanges(xu$start, end = xu$end), strand = xu$strand, type = xu$type, name = xu$name, name_2 = xu$name)
 xu <- xu %>% sortSeqlevels() %>% sort()
 seqinfo(xu, new2old = c(1:16, NA)) <- seqinfo(txdb)
 
@@ -298,7 +298,7 @@ ont <- ont_ga %>% unname() %>% grglist()
 # Also skip fusion ONT reads (covering at least 2 disjoint known genes by more than 50% each):
 fusion_idx <- ont %>% range() %>% unlist() %>% TranscriptomeReconstructoR:::find_fusion_tx(genes, skip = FALSE)
 if (length(fusion_idx) > 0) {
-  message(length(fusion_idx), " fusion transcripts skipped;")
+  message(length(fusion_idx), " fusion reads skipped;")
   ont <- ont[-fusion_idx]
 }
 
@@ -323,8 +323,9 @@ reads_free <- out[[5]]
 
 # Combine adjusted and novel genes:
 names(genes_adj) <- NULL
-mcols(genes_adj) <- mcols(genes_adj) %>% subset(select = c("type", "name", "orig_coord", "tss", "tss_summit", "pas", "pas_summit"))
+mcols(genes_adj) <- mcols(genes_adj) %>% subset(select = c("type", "name", "name_2", "orig_coord", "tss", "tss_summit", "pas", "pas_summit"))
 score(genes_adj) <- 0
+mcols(hml_genes)$name_2 <- NA
 mcols(hml_genes)$orig_coord <- granges(hml_genes)
 hml_genes <- hml_genes %>% 
   add_tss_or_pas_info(tss, mode = "tss") %>% 
@@ -345,9 +346,10 @@ nascent_tx <- nascent_tx %>%
   `[`(width(.) >= 500)
 
 # Combine all_genes and nascent_tx:
-mcols(all_genes) <- mcols(all_genes) %>% subset(select = c("type", "name", "orig_coord"))
+mcols(all_genes) <- mcols(all_genes) %>% subset(select = c("type", "name", "name_2", "orig_coord"))
 mcols(nascent_tx) <- mcols(nascent_tx) %>% subset(select = c("type", "name"))
 mcols(nascent_tx)$orig_coord <- nascent_tx %>% granges() %>% unname() # dummy column for compatibility with all_genes
+mcols(nascent_tx)$name_2 <- NA
 final_genes <- c(all_genes, nascent_tx) %>% sort()
 
 # Count NET-seq FPKM on the merged samples from all published studies:
@@ -356,6 +358,9 @@ mcols(final_genes)$fpkm <- get_overlapping_scores(final_genes, netseq_merged_fb_
 
 # Save the new yeast annotation for future use by 04-Find-DNC_loci.R:
 saveRDS(final_genes, "Improved_annotation_for_Scerevisiae.RDS")
+
+# Also export as BED file for visualization in genomic browsers:
+export(final_genes, "Improved_annotation_for_Scerevisiae.bed", format = "BED")
 
 # Also count FPKM values on our NET-seq data (for Fig. 2D, Fig. 3B-C, SFig. 2B):
 cm <- get_overlapping_scores(final_genes, our_netseq_data, value = "count_matrix") %>% apply(2, `/`, width(final_genes)) %>% `*`(1e03) %>% round(1)

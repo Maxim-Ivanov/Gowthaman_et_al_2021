@@ -39,11 +39,13 @@ hits <- hits[best]
 win_par <- win_trim[queryHits(hits)]
 dnc <- good_genes[subjectHits(hits)]
 
+mcols(dnc)$name_2 <- NULL
 mcols(dnc)$host_name <- mcols(win_par)$name
+mcols(dnc)$host_name_2 <- mcols(win_par)$name_2
 mcols(dnc)$host_coord <- mcols(win_par)$host
 mcols(dnc)$host_fpkm <- mcols(win_par)$fpkm
 
-# Load NFR from Chereji et al., 2018 (PMID 29426353):
+# Load NFR from Chereji et al., 2018 (PMID PMID29426353):
 download.file("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5807854/bin/13059_2018_1398_MOESM2_ESM.xlsx", "Chereji2018_NFR.xlsx", method = "curl")
 nfr_tbl <- read_excel("Chereji2018_NFR.xlsx")
 nfr <- GRanges(seqnames = nfr_tbl$Chr, IRanges(start = nfr_tbl$`NDR Center`, width = 0), strand = "*", seqinfo = seqinfo(dnc)) %>% 
@@ -74,3 +76,8 @@ dnc <- dnc[tbl$nucl_count == 0]
 
 # Save the results for future use:
 saveRDS(dnc, "DNC_loci.RDS")
+
+# Also export as Tab-delimited file:
+dnc_tbl <- dnc %>% as.data.frame() %>% as_tibble() %>% select(-c(width, host_coord.seqnames, host_coord.width))
+colnames(dnc_tbl) <- colnames(dnc_tbl) %>% str_replace("coord.", "")
+write_tsv(dnc_tbl, "DNC_loci.txt")
