@@ -1,18 +1,15 @@
 # This script imports raw flow cytometry data, calculate some statistics (e.g. the directionality scores) and returns a data frame;
 # It used the flowCore library to read FCS files which correspond to individual wells on 96- or 384-well plates;
-# The FCS files are expected to be placed in subdirectories (the name of subdirectory is regarded as the plate name);
-# Each subdirectory is expected to contain a sample information file;
-# Sample info file is a Tab-delimited text file with three columns: i) well number (e.g. A01); ii) human-readable sample name (e.g. BY4741, or WT); iii) sample type.
-# The allowed sample types are: S  for regular samples, N for negative controls, F for FPR controls, C for other controls;
 
-if (!requireNamespace("flowCore", quietly = TRUE)) {
+if (!"flowCore" %in% rownames(installed.packages())) {
   BiocManager::install("flowCore")
-  library(flowCore)
 }
+library(flowCore)
 
-fc_dir <- "."
-orc2_dir <- file.path(fc_dir, "ORC2_screen")
-gcg1_dir <- file.path(fc_dir, "GCG1_screen")
+# Download FCS files from flowrepository.org (accessions FR-FCM-Z3W4 and FR-FCM-Z3W5);
+orc2_dir <- "ORC2_screen" # full path to the directory with FCS files from FR-FCM-Z3W5
+gcg1_dir <- "GCG1_screen" # full path to the directory with FCS files from FR-FCM-Z3W4
+
 
 ##### Define custom functions ----------------------------------------------------------------------------------------------
 
@@ -210,7 +207,7 @@ read_sample_info <- function(sample_file) {
 #'         \item \code{Clean} TRUE if the well passes the "regression filter" and thus can be safely used to calculate the regression line;
 #'     }
 #' }
-load_plate_data <- function(dir = ".", subdirs = FALSE, sample_info_file = NULL, cell_shape_filter = 0.1, 
+load_plate_data <- function(dir = ".", subdirs = FALSE, parse_filename = !subdirs, sample_info_file = NULL, cell_shape_filter = 0.1, 
                             min_ncells = 100, mode = "all_wells", subtract_negative = TRUE, min_fpr = 5, 
                             regression_filter = 0.05, ch1 = "mCherry.H", ch2 = "B535.345.H") {
   # Count FCS files either in the provided directory ("dir"), or in its subdirectories (depending on value of "subdirs"):
@@ -231,8 +228,8 @@ load_plate_data <- function(dir = ".", subdirs = FALSE, sample_info_file = NULL,
   final_df_list <- vector("list", length(nfiles)) # if subdirs == FALSE, final_df_list is a list of length 1
   # Process all FCS files one by one:
   for (i in seq_along(nfiles)) {
-    if (!is.null(names(nfiles))) {
-      plate_name <- names(nfiles)[[i]] # define the plate name
+    if (!is.null(names(nfiles)) && !parse_filename) {
+      plate_name <- names(nfiles)[[i]] # subdirectory name is considered as the plate name
       folder <- file.path(dir, plate_name) # define path to the FCS directory
     } else {
       if (dir == ".") {
@@ -249,21 +246,29 @@ load_plate_data <- function(dir = ".", subdirs = FALSE, sample_info_file = NULL,
     message("\tCalculating well-level stats;")
     df_list <- unname(lapply(fs, process_flowframe, cell_shape_filter = cell_shape_filter, min_ncells = min_ncells, ch1 = ch1, ch2 = ch2))
     df <- do.call(rbind, df_list)
-    # Add sample info, if available:
-    if (is.character(sample_info_file) && length(sample_info_file) == 1) {
-      sample_file <- file.path(folder, sample_info_file)
-      if (file.exists(sample_file)) {
-        message("\tAdding sample info;")
-        mapping <- read_sample_info(sample_file)
-        df <- merge(df, mapping, by = "Well", all.x = TRUE)
+    # Add Type, Name and Plate columns to the dataframe:
+    if (parse_filename) {
+      fn_spl <- strsplit(sub(".fcs", "", names(fs)), "_")
+      df$Name <- unlist(lapply(fn_spl, `[`, 5))
+      df$Type <- unlist(lapply(fn_spl, `[`, 6))
+      df$Plate <- unlist(lapply(lapply(fn_spl, `[`, c(2, 3)), paste, collapse = "_"))
+    } else {
+      # Use sample info file, if available:
+      if (is.character(sample_info_file) && length(sample_info_file) == 1) {
+        sample_file <- file.path(folder, sample_info_file)
+        if (file.exists(sample_file)) {
+          message("\tAdding sample info;")
+          mapping <- read_sample_info(sample_file)
+          df <- merge(df, mapping, by = "Well", all.x = TRUE)
+        } else {
+          warning("\tCannot find sample info file ", sample_info_file, " in directory ", folder, "!")
+          df$Name <- NA; df$Type <- NA
+        }
       } else {
-        warning("\tCannot find sample info file ", sample_info_file, " in directory ", folder, "!")
         df$Name <- NA; df$Type <- NA
       }
-    } else {
-      df$Name <- NA; df$Type <- NA
+      df$Plate <- plate_name # add the plate name
     }
-    df$Plate <- plate_name # add the plate name
     # Mark negative control samples:
     neg_wells <- !is.na(df$Type) & df$Type == "N"
     df$Non_neg <- !neg_wells
@@ -272,52 +277,25 @@ load_plate_data <- function(dir = ".", subdirs = FALSE, sample_info_file = NULL,
       message("\tBackground correction by ", sum(neg_wells), " negative samples;")
       df <- process_negative_controls(df)
     }
-    # Mark annotated samples (found in the sample info file):
+    # Mark annotated samples:
     df$Ann <- !is.na(df$Name)
     # Reorder columns in the data frame (just for better readability):
-    before <- c("Plate", "Well", "Name", "Type")
-    after <- c("N_cells", "YFP_well", "mCh_well", "r_well", "Non_neg", "Ann")
-    if (is.null(df$Screen)) {
-      df <- df[, c(before, after)]
-    } else {
-      df <- df[, c(before, "Screen", after)]
-    }
+    df <- df[, c("Plate", "Well", "Name", "Type","N_cells", "YFP_well", "mCh_well", "r_well", "Non_neg", "Ann")]
     # Calculate plate-levels stats:
-    if (is.null(df$Screen)) {
+    uniq_plates <- unique(df$Plate)
+    if (length(uniq_plates) == 1) {
       message("\tCalculating plate-level stats on all wells;")
       df <- calc_plate_stats(df, mode = mode, min_fpr = min_fpr, regression_filter = regression_filter)
     } else {
-      scr <- df$Ann & df$Screen != ""
-      if (sum(scr) == 0) {
-        warning("\t\tNo wells with known reporter name!")
-      }
-      uniq_scr <- unique(df$Screen[scr])
-      if (length(uniq_scr) > 1) {
-        last <- uniq_scr[[length(uniq_scr)]]
-        other <- uniq_scr[1:(length(uniq_scr) - 1)]
-        message("\tCalculating plate-level stats separately on ", paste(other, sep = ","), " and ", last, " reporters;")
-        if (length(!scr) > 0) {
-          df_noscr <- df[!scr, ]
-          fake <- matrix(nrow = nrow(df_noscr), ncol = 14)
-          df_noscr <- cbind(df_noscr, as.data.frame(fake))
-        }
-        df <- df[scr, ]
-        by_obj <- by(df, list(df$Screen), calc_plate_stats, mode = mode, min_fpr = min_fpr, regression_filter = regression_filter, simplify = FALSE)
-        df <- do.call(rbind, by_obj)
-        rownames(df) <- NULL
-        if (length(!scr) > 0) {
-          colnames(df_noscr) <- colnames(df)
-          df <- rbind(df, df_noscr)
-        }
-      } else {
-        message("\tCalculating plate-level stats on all wells;")
-        df <- calc_plate_stats(df, mode = mode, min_fpr = min_fpr, regression_filter = regression_filter)
-      }
+      message("\tCalculating plate-level stats on wells grouped by plate names (n = ", length(uniq_plates), ");")
+      by_obj <- by(df, list(df$Plate), calc_plate_stats, mode = mode, min_fpr = min_fpr, regression_filter = regression_filter, simplify = FALSE)
+      df <- do.call(rbind, by_obj)
+      rownames(df) <- NULL
     }
     # Sort data frame by well names:
     well_letter <- substr(df$Well, 1, 1)
     well_number <- substr(df$Well, 2, 3)
-    df <- df[order(well_letter, well_number), ]
+    df <- df[order(df$Plate, well_letter, well_number), ]
     # Append the plate-specific data frame to final_df_list:
     final_df_list[[i]] <- df
   }
@@ -329,8 +307,8 @@ load_plate_data <- function(dir = ".", subdirs = FALSE, sample_info_file = NULL,
 
 ##### Use the functions defines above to import the raw FCS files ---------------------------------------------------------------
 
-df_orc2 <- load_plate_data(dir = orc2_dir, subdirs = TRUE, sample_info_file = "Info.txt")
-df_gcg1 <- load_plate_data(dir = gcg1_dir, subdirs = TRUE, sample_info_file = "Info.txt")
+df_orc2 <- load_plate_data(dir = orc2_dir)
+df_gcg1 <- load_plate_data(dir = gcg1_dir)
 
 # Save the data frames for future use:
 saveRDS(df_orc2, "df_orc2.RDS")
