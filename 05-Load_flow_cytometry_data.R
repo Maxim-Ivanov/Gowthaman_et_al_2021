@@ -63,10 +63,10 @@ process_negative_controls <- function(df) {
     df$YFP_well <- df$YFP_well - mean(df_neg$YFP_well) # the subtraction can produce values below zero in negative samples
     df$mCh_well <- df$mCh_well - mean(df_neg$mCh_well)
     # Check that all fluorescence values in non-negative samples remain positive after subtraction:
-    damaged <- !is.na(df$r_well) & df$Non_neg & (df$YFP_well < 0 | df$mCh_well < 0)
-    if (any(damaged)) {
-      warning("\t", sum(damaged), " non-negative samples were damaged by the background correction!")
-    }
+    #damaged <- !is.na(df$r_well) & df$Non_neg & (df$YFP_well < 0 | df$mCh_well < 0)
+    #if (any(damaged)) {
+    #  warning("\t", sum(damaged), " non-negative samples were damaged by the background correction!")
+    #}
   } else {
     message("\tCannot subtract negative controls...")
   }
@@ -82,6 +82,7 @@ add_pval_column <- function(df, rows, data_column, pval_column) {
   df[, pval_column] <- ifelse(df[, data_column] <= col_mean, pvals, 1 - pvals)
   return(df)
 }
+
 
 # This function calculate plate-level statistics:
 calc_plate_stats <- function(df, mode, regression_filter, min_fpr) {
@@ -109,7 +110,7 @@ calc_plate_stats <- function(df, mode, regression_filter, min_fpr) {
   df$r_plate <- cor(df$YFP_well[chosen_rows], df$mCh_well[chosen_rows], method = "spearman", use = "na.or.complete")
   df$Ratio_plate <- df$YFP_plate / df$mCh_plate
   # Calculate the "geometric" distance (the "directionality score"):
-  # (if using all samples, then skip the potential outliers which may disturb the regression line)
+  # (if using all samples, then skip potential outliers which may disturb the regression line)
   clean_rows <- chosen_rows
   if (isTRUE(using_all) && is.numeric(regression_filter) && length(regression_filter) == 1) {
     decent_rows <- quantile_filtering(df[chosen_rows, ], columns = c("YFP_well", "mCh_well"), quant = c(regression_filter, 1 - regression_filter))
@@ -138,23 +139,46 @@ calc_plate_stats <- function(df, mode, regression_filter, min_fpr) {
   return(df)
 }
 
-read_sample_info <- function(sample_file) {
+parse_info_file <- function(sample_file, info_fields) {
   out <- read.table(sample_file, sep = "\t", header = FALSE)
-  out <- out[, 1:3] # skip extra columns if any
-  names(out) <- c("Well", "Name", "Type") # the first three columns in the Tab-delimited sample file are expected to look like: "B08 snf5 S"
+  out <- out[, info_fields] # skip extra columns, if any
+  names(out) <- names(info_fields)
   return(out)
+}
+
+no_info_file <- function(df, info_fields) {
+  colnames <- names(info_fields)
+  colnames <- colnames[colnames != "Well"]
+  for (i in seq_along(colnames)) {
+    colname <- colnames[[i]]
+    df[, colname] <- NA
+  }
+  return(df)
+}
+
+make_grouping <- function(df, group_by) {
+  grp <- vector("list", length(group_by))
+  for (i in seq_along(group_by)) {
+    grp[[i]] <- df[, group_by[[i]]]
+  }
+  return(grp)
 }
 
 #' Load FCS data and calculate directionality scores
 #'
-#' @param dir path to the directory which contains FCS files (or subdirectories with FCS files).
+#' @param dir Path to the directory which contains FCS files (or subdirectories with FCS files).
 #' @param subdirs If set to TRUE, the script looks for FCS files in subdirectories of \code{dir}. The names of subdirectories are considered as names of individual plates.
-#' @param sample_info_file Name of the annotation file (should be placed into the directory with relevant FCS files).
+#' @param parse_filenames TRUE means to extract plate name, sample name and sample type from the FCS filename.
+#' @param filename_fields List of underscore-separated fields in the FCS filename to be used when isTRUE(parse_filenames).
+#' @param use_info_file TRUE means to use sample annotation file in the same directory as FCS files to extract the information on sample names and types.
+#' @param info_file_name Name of the sample annotation file.
+#' @param info_fields List of columns in the sample annotation file that are joined with the fluorescence values.
+#' @param info_file_function This argument allows to supply an external function to parse non-standard sample annotation files. 
 #' @param cell_shape_filter The stringency of removal of odd-shaped cells based on the distribution of front scatter (FSC) and side scatter (SSC) values.
 #' @param min_ncells A well is considered valid if the number of cells (after filtering by cell shape) does not drop below this number.
-#' @param mode if \code{mode == "all_wells"} (default), the plate-level stats will be calculated on all wells (except the negative controls). 
-#' Otherwise, if \code{mode == "FPR_only"}, the plate-level stats will be calculated only on samples annotated as FPR controls. 
-#' This can be useful if the analyzed yeast samples were heavily selected (e.g. they are the best hits from a big screening).
+#' @param mode if \code{mode == "all_wells"} (default), the stats will be calculated on all wells (except the negative controls). 
+#' Otherwise, if \code{mode == "FPR_only"}, the stats will be calculated only on samples annotated as FPR controls. 
+#' This can be useful if the analyzed yeast samples were heavily selected (e.g. they are the best hits chosen from a big screening).
 #' @param subtract_negative If TRUE (default), then all fluorescense values are background corrected by the samples annotated as negative controls (N).
 #' @param regression_filter Skip potential outlier observations when calculating the regression line. 
 #' By default, \code{regression_filter = 0.05} which means that a reliable data point should have both YFP_well and mCh_well values between their 5% and 95% quantiles. 
@@ -207,29 +231,34 @@ read_sample_info <- function(sample_file) {
 #'         \item \code{Clean} TRUE if the well passes the "regression filter" and thus can be safely used to calculate the regression line;
 #'     }
 #' }
-load_plate_data <- function(dir = ".", subdirs = FALSE, parse_filename = !subdirs, sample_info_file = NULL, cell_shape_filter = 0.1, 
-                            min_ncells = 100, mode = "all_wells", subtract_negative = TRUE, min_fpr = 5, 
+load_plate_data <- function(dir = ".", subdirs = FALSE, parse_filename = !subdirs, filename_fields = list("Name" = 5, "Type" = 6, "Plate" = 2:3), 
+                            use_info_file = subdirs, info_file_name = "Info.txt", info_file_function = parse_info_file,
+                            info_fields = c("Well" = 1, "Name" = 2, "Type" = 3), group_by = "Plate",
+                            cell_shape_filter = 0.1, min_ncells = 100, mode = "all_wells", subtract_negative = TRUE, min_fpr = 5, 
                             regression_filter = 0.05, ch1 = "mCherry.H", ch2 = "B535.345.H") {
-  # Count FCS files either in the provided directory ("dir"), or in its subdirectories (depending on value of "subdirs"):
+  # Find FCS files either in the provided directory ("dir"), or in its subdirectories (depending on the value of subdirs):
   if (isTRUE(subdirs)) {
     subf <- list.dirs(dir, full.names = FALSE)
     subf <- subf[nchar(subf) > 0] # skip the first record which is always empty
-    nfiles <- lapply(subf, function(x) { return(length(list.files(file.path(dir, x), pattern = "fcs$"))) }) # read names of FCS files in each subdirectory
-    names(nfiles) <- subf
+    fcs_files <- lapply(subf, function(x) { list.files(file.path(dir, x), pattern = "fcs$") }) # read names of FCS files in each subdirectory
+    names(fcs_files) <- subf
   } else {
-    nfiles <- list(length(list.files(dir, pattern = "fcs$"))) # if subdirs == FALSE, nfiles is a list of length 1
+    fcs_files <- list(list.files(dir, pattern = "fcs$")) # if subdirs == FALSE, files is a list of length 1
   }
-  nfiles <- nfiles[nfiles > 0] # skip directories which do not contain FCS files
-  if (length(nfiles) == 0) {
-    stop("There are no FCS files to load!")
-  } else {
-    message("There are ", sum(as.integer(nfiles)), " FCS files in ", length(nfiles), " directories;")
-  }
-  final_df_list <- vector("list", length(nfiles)) # if subdirs == FALSE, final_df_list is a list of length 1
-  # Process all FCS files one by one:
-  for (i in seq_along(nfiles)) {
-    if (!is.null(names(nfiles)) && !parse_filename) {
-      plate_name <- names(nfiles)[[i]] # subdirectory name is considered as the plate name
+  # Calculate the number of files in each directory:
+  nfiles <- lapply(fcs_files, length)
+  # Skip directories which do not contain FCS files:
+  fcs_files <- fcs_files[nfiles > 0]
+  # Print the total number of files:
+  sum_nfiles <- sum(unlist(nfiles))
+  stopifnot(sum_nfiles > 0)
+  message("Found ", sum_nfiles, " FCS files in ", length(nfiles), " directories;")
+  df_list <- vector("list", length(nfiles)) # if subdirs == FALSE, final_df_list is a list of length 1
+  # Load FCS files:
+  for (i in seq_along(fcs_files)) {
+    # Define the plate name:
+    if (!is.null(names(fcs_files))) {
+      plate_name <- names(fcs_files)[[i]] # subdirectory name = plate name (can be overwritten later if isTRUE(parse_filename))
       folder <- file.path(dir, plate_name) # define path to the FCS directory
     } else {
       if (dir == ".") {
@@ -239,69 +268,82 @@ load_plate_data <- function(dir = ".", subdirs = FALSE, parse_filename = !subdir
       }
       folder <- dir
     }
-    message("Reading ", nfiles[[i]], " FCS files from plate ", plate_name, ";")
+    message("\tReading ", nfiles[[i]], " FCS files from plate ", plate_name, ";")
     # Batch read FCS files in given directory:
     fs <- as(read.flowSet(path = folder, pattern = "fcs$", alter.names = TRUE), "list")
-    # Extract well-level statistics from all FCS files in the directory (using custom function process_flowframe() defined above):
+    # Extract well-level statistics from all FCS files in the directory:
     message("\tCalculating well-level stats;")
-    df_list <- unname(lapply(fs, process_flowframe, cell_shape_filter = cell_shape_filter, min_ncells = min_ncells, ch1 = ch1, ch2 = ch2))
-    df <- do.call(rbind, df_list)
-    # Add Type, Name and Plate columns to the dataframe:
+    df <- do.call(rbind, unname(lapply(fs, process_flowframe, cell_shape_filter = cell_shape_filter, min_ncells = min_ncells, ch1 = ch1, ch2 = ch2)))
+    # Add annotation columns to the dataframe:
     if (parse_filename) {
+      # Extract Plate, Name and Type info from the filenames:
       fn_spl <- strsplit(sub(".fcs", "", names(fs)), "_")
-      df$Name <- unlist(lapply(fn_spl, `[`, 5))
-      df$Type <- unlist(lapply(fn_spl, `[`, 6))
-      df$Plate <- unlist(lapply(lapply(fn_spl, `[`, c(2, 3)), paste, collapse = "_"))
+      for (j in seq_along(filename_fields)) {
+        colname <- names(filename_fields)[[j]]
+        fields <- filename_fields[[j]]
+        df[, colname] <- unlist(lapply(lapply(fn_spl, `[`, fields), paste, collapse = "_"))
+      }
+      added_cols <- names(filename_fields)
+      added_cols <- added_cols[added_cols != "Plate"]
     } else {
+      df$Plate <- plate_name # add the plate name
       # Use sample info file, if available:
-      if (is.character(sample_info_file) && length(sample_info_file) == 1) {
-        sample_file <- file.path(folder, sample_info_file)
+      if (use_info_file) {
+        sample_file <- file.path(folder, info_file_name)
         if (file.exists(sample_file)) {
-          message("\tAdding sample info;")
-          mapping <- read_sample_info(sample_file)
+          mapping <- info_file_function(sample_file, info_fields)
           df <- merge(df, mapping, by = "Well", all.x = TRUE)
         } else {
-          warning("\tCannot find sample info file ", sample_info_file, " in directory ", folder, "!")
-          df$Name <- NA; df$Type <- NA
+          warning("\tCannot find sample info file ", info_file, " in directory ", folder, "!")
+          df <- no_info_file(df, info_fields)
         }
       } else {
-        df$Name <- NA; df$Type <- NA
+        df <- no_info_file(df, info_fields)
       }
-      df$Plate <- plate_name # add the plate name
+      colnames <- names(info_fields)
+      added_cols <- colnames[colnames != "Well"]
     }
-    # Mark negative control samples:
-    neg_wells <- !is.na(df$Type) & df$Type == "N"
-    df$Non_neg <- !neg_wells
-    # Subtract and mark negative control samples, if any:
-    if (sum(neg_wells) > 0 && isTRUE(subtract_negative)) {
-      message("\tBackground correction by ", sum(neg_wells), " negative samples;")
-      df <- process_negative_controls(df)
-    }
-    # Mark annotated samples:
-    df$Ann <- !is.na(df$Name)
-    # Reorder columns in the data frame (just for better readability):
-    df <- df[, c("Plate", "Well", "Name", "Type","N_cells", "YFP_well", "mCh_well", "r_well", "Non_neg", "Ann")]
-    # Calculate plate-levels stats:
-    uniq_plates <- unique(df$Plate)
-    if (length(uniq_plates) == 1) {
-      message("\tCalculating plate-level stats on all wells;")
-      df <- calc_plate_stats(df, mode = mode, min_fpr = min_fpr, regression_filter = regression_filter)
-    } else {
-      message("\tCalculating plate-level stats on wells grouped by plate names (n = ", length(uniq_plates), ");")
-      by_obj <- by(df, list(df$Plate), calc_plate_stats, mode = mode, min_fpr = min_fpr, regression_filter = regression_filter, simplify = FALSE)
-      df <- do.call(rbind, by_obj)
-      rownames(df) <- NULL
-    }
-    # Sort data frame by well names:
-    well_letter <- substr(df$Well, 1, 1)
-    well_number <- substr(df$Well, 2, 3)
-    df <- df[order(df$Plate, well_letter, well_number), ]
-    # Append the plate-specific data frame to final_df_list:
-    final_df_list[[i]] <- df
+    # Append dataframe to df_list:
+    df_list[[i]] <- df
   }
-  # Combine results from different plates (n >= 1):
-  out <- do.call(rbind, final_df_list)
-  return(out)
+  # Combine results from different plates:
+  df <- do.call(rbind, df_list)
+  # Reorder columns:
+  new_cols <- c("Plate", "Well")
+  if (!is.null(added_cols) && length(added_cols) > 0) {
+    new_cols <- c(new_cols, added_cols)
+  }
+  new_cols <- c(new_cols, c("N_cells", "YFP_well", "mCh_well", "r_well"))
+  all_cols <- colnames(df)
+  other_cols <- all_cols[!all_cols %in% new_cols]
+  new_cols <- c(new_cols, other_cols)
+  df <- df[, new_cols]
+  # Mark negative control samples:
+  neg_wells <- !is.na(df$Type) & df$Type == "N"
+  df$Non_neg <- !neg_wells
+  # Mark annotated samples:
+  df$Ann <- !is.na(df$Name)
+  # Subtract negative control samples (rows grouped by plate):
+  if (sum(neg_wells) > 0 && isTRUE(subtract_negative)) {
+    message("Background correction by ", sum(neg_wells), " negative samples;")
+    grp <- make_grouping(df, group_by)
+    df <- do.call(rbind, by(df, grp, process_negative_controls, simplify = FALSE))
+    rownames(df) <- NULL
+  }
+  # Calculate stats (rows grouped by plate):
+  message("Calculating stats...")
+  grp <- make_grouping(df, group_by)
+  df <- do.call(rbind, by(df, grp, calc_plate_stats, mode = mode, min_fpr = min_fpr, regression_filter = regression_filter, simplify = FALSE))
+  rownames(df) <- NULL
+  # Sort data frame by plate and well names:
+  well_letter <- substr(df$Well, 1, 1)
+  well_number <- substr(df$Well, 2, 3)
+  df <- df[order(df$Plate, well_letter, well_number), ]
+  # Skip excessive columns:
+  df$Non_neg <- NULL
+  df$Ann <- NULL
+  df$Clean <- NULL
+  return(df)
 }
 
 
