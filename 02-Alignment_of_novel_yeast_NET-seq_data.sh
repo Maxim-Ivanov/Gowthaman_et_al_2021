@@ -90,7 +90,7 @@ done
 
 # Merge forward and reverse Bedgraph files: 
 for f1 in s*fw.bg; do 
-  f2=${file1/_fw/_rev} && 
+  f2=${f1/_fw/_rev} && 
   outf=${f1/_fw.bg/.bedgraph.gz} && 
   echo $f1 "+" $f2 "=" $outf && 
   awk 'BEGIN{OFS="\t"}{print $1,$2,$3,"-"$4}' $f2 | 
