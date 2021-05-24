@@ -64,17 +64,18 @@ strand(win2) <- ifelse(strand(win2) == "+", "-", "+")
 win3 <- mcols(dnc)$host_coord %>% resize(ifelse(width(.) > 500, 500, width(.)), "start")
 
 # Download ChIP-seq data from Ha et al., (PMID 31537788):
-url <- list("H3ac_wt_rep1" = "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSM3445776&format=file&file=GSM3445776%5FYSB787%2D1%2DH3ac%5FnoDup%2Enorm%2Ebw", 
-            "H3ac_wt_rep2" = "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSM3445777&format=file&file=GSM3445777%5FYSB787%2D2%2DH3ac%5FnoDup%2Enorm%2Ebw", 
-            "H3_wt_rep1" = "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSM3445780&format=file&file=GSM3445780%5FYSB787%2D1%2DH3%5FnoDup%2Enorm%2Ebw", 
-            "H3_wt_rep2" = "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSM3445781&format=file&file=GSM3445781%5FYSB787%2D2%2DH3%5FnoDup%2Enorm%2Ebw", 
-            "H3ac_hda1_rep1" = "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSM3445782&format=file&file=GSM3445782%5FYTK113%2D1%2DH3ac%5FnoDup%2Enorm%2Ebw", 
-            "H3ac_hda1_rep2" = "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSM3445783&format=file&file=GSM3445783%5FYTK113%2D2%2DH3ac%5FnoDup%2Enorm%2Ebw", 
-            "H3_hda1_rep1" = "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSM3445786&format=file&file=GSM3445786%5FYTK113%2D1%2DH3%5FnoDup%2Enorm%2Ebw", 
-            "H3_hda1_rep2" = "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSM3445787&format=file&file=GSM3445787%5FYTK113%2D2%2DH3%5FnoDup%2Enorm%2Ebw")
+prefix <- "https://www.ncbi.nlm.nih.gov/geo/download/?acc="
+url <- list("H3ac_wt_rep1" = "GSM3445776&format=file&file=GSM3445776%5FYSB787%2D1%2DH3ac%5FnoDup%2Enorm%2Ebw", 
+            "H3ac_wt_rep2" = "GSM3445777&format=file&file=GSM3445777%5FYSB787%2D2%2DH3ac%5FnoDup%2Enorm%2Ebw", 
+            "H3_wt_rep1" = "GSM3445780&format=file&file=GSM3445780%5FYSB787%2D1%2DH3%5FnoDup%2Enorm%2Ebw", 
+            "H3_wt_rep2" = "GSM3445781&format=file&file=GSM3445781%5FYSB787%2D2%2DH3%5FnoDup%2Enorm%2Ebw", 
+            "H3ac_hda1_rep1" = "GSM3445782&format=file&file=GSM3445782%5FYTK113%2D1%2DH3ac%5FnoDup%2Enorm%2Ebw", 
+            "H3ac_hda1_rep2" = "GSM3445783&format=file&file=GSM3445783%5FYTK113%2D2%2DH3ac%5FnoDup%2Enorm%2Ebw", 
+            "H3_hda1_rep1" = "GSM3445786&format=file&file=GSM3445786%5FYTK113%2D1%2DH3%5FnoDup%2Enorm%2Ebw", 
+            "H3_hda1_rep2" = "GSM3445787&format=file&file=GSM3445787%5FYTK113%2D2%2DH3%5FnoDup%2Enorm%2Ebw")
 
 for (i in seq_along(url)) {
-  download.file(url[[i]], paste0("Ha2019_", names(url)[[i]], ".bw"), method = "curl")
+  download.file(paste0(prefix, url[[i]]), paste0("Ha2019_", names(url)[[i]], ".bw"), method = "curl")
 }
 
 # Load ChIP-seq tracks into R:
@@ -91,20 +92,22 @@ idx <- seq(1, length(bw_data), by = 2)
 bw_data_merged <- lapply(idx, function(x) { merge_and_normalize_GRanges(bw_data[c(x, x + 1)]) })
 names(bw_data_merged) <- names(bw_data)[idx] %>% str_replace("_rep1", "")
 
-draw_chipseq_metagenes <- function(data, win1, win2, win3, title) {
+draw_chipseq_metagenes <- function(data, win1, win2, win3, title, ylabel) {
   ml1 <- lapply(data, metagene_matrix, intervals = win1, scaling = FALSE, matrix.length = 1000, anchor = "end", skip.zeros = FALSE, skip.outliers = FALSE, skip.top.obs = TRUE, shrink = TRUE)
   ml2 <- lapply(data, metagene_matrix, intervals = win2, scaling = TRUE, matrix.length = 50, skip.zeros = FALSE, skip.outliers = FALSE, skip.top.obs = TRUE)
   ml3 <- lapply(data, metagene_matrix, intervals = win3, scaling = FALSE, matrix.length = 500, anchor = "start", skip.zeros = FALSE, skip.outliers = FALSE, skip.top.obs = TRUE, shrink = TRUE)
   ml <- mapply(cbind, ml1, ml2, ml3, SIMPLIFY = FALSE)
   ml <- lapply(ml, function(x) { return(x[, seq(ncol(x), 1)]) }) # flip the plot horizontally
-  draw_metagene_plot(ml, x.axis = seq(-149, 200), vline = c(-50, 0), title = title, xlabel = "[-1Kb, DNC TSS] (5 bp bins) + [DNC TSS, host TSS] (50 bins) + [host TSS, +500bp] (5 bp bins)", width = 10, height = 8, units = "in")
+  draw_metagene_plot(ml, x.axis = seq(-149, 200), vline = c(-50, 0), title = title, 
+                     xlabel = "[-1Kb, DNC TSS] (5 bp bins) + [DNC TSS, host TSS] (50 bins) + [host TSS, +500bp] (5 bp bins)", 
+                     ylabel = ylabel, width = 10, height = 8, units = "in")
 }
 
 # Draw SFig. 5A:
-draw_chipseq_metagenes(bw_data_merged[c("H3ac_wt", "H3ac_hda1")], win1, win2, win3, paste0("H3ac in hda1 vs WT (n=", length(win1), ")"))
+draw_chipseq_metagenes(bw_data_merged[c("H3ac_wt", "H3ac_hda1")], win1, win2, win3, paste0("H3ac in hda1 vs WT (n=", length(win1), ")"), ylabel = "H3ac")
 
 # Draw SFig. 5B:
-draw_chipseq_metagenes(bw_data_merged[c("H3_wt", "H3_hda1")], win1, win2, win3, paste0("H3 in hda1 vs WT (n=", length(win1), ")"))
+draw_chipseq_metagenes(bw_data_merged[c("H3_wt", "H3_hda1")], win1, win2, win3, paste0("H3 in hda1 vs WT (n=", length(win1), ")"), ylabel = "H3")
 
 # "Normalize" H3ac signal by H3:
 calculate_log2_ratio_of_two_gr <- function(gr1, gr2, pseudocount = 0.1) {
@@ -121,11 +124,4 @@ bw_data_ratio <- list("wt" = calculate_log2_ratio_of_two_gr(bw_data_merged[["H3a
                       "hda1" = calculate_log2_ratio_of_two_gr(bw_data_merged[["H3ac_hda1"]], bw_data_merged[["H3_hda1"]]))
 
 # Draw Fig. 5B:
-ml1 <- lapply(bw_data_ratio, metagene_matrix, intervals = win1, scaling = FALSE, matrix.length = 1000, anchor = "end", skip.zeros = FALSE, skip.outliers = FALSE, skip.top.obs = TRUE, shrink = TRUE)
-ml2 <- lapply(bw_data_ratio, metagene_matrix, intervals = win2, scaling = TRUE, matrix.length = 50, skip.zeros = FALSE, skip.outliers = FALSE, skip.top.obs = TRUE)
-ml3 <- lapply(bw_data_ratio, metagene_matrix, intervals = win3, scaling = FALSE, matrix.length = 500, anchor = "start", skip.zeros = FALSE, skip.outliers = FALSE, skip.top.obs = TRUE, shrink = TRUE)
-ml <- mapply(cbind, ml1, ml2, ml3, SIMPLIFY = FALSE)
-ml <- lapply(ml, function(x) { return(x[, seq(ncol(x), 1)]) }) # flip the plot horizontally
-draw_metagene_plot(ml, x.axis = seq(-199, 150), vline = c(0, 50), title = paste0("Ratio of H3ac to H3 in hda1 vs WT (n=", length(win1), ")"), 
-                   xlabel = "[-1Kb, DNC TSS] (5 bp bins) + [DNC TSS, host TSS] (50 bins) + [host TSS, +500bp] (5 bp bins)", 
-                   width = 10, height = 8, units = "in", ylabel = "log2(H3ac / H3)")
+draw_chipseq_metagenes(bw_data_ratio, win1, win2, win3, title = paste0("Ratio of H3ac to H3 in hda1 vs WT (n=", length(win1), ")"), ylabel = "log2(H3ac / H3)")
