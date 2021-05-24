@@ -23,10 +23,10 @@ orc <- file.path(df_dir, "df_orc2.RDS") %>% readRDS()
 gcg <- file.path(df_dir, "df_gcg1.RDS") %>% readRDS()
 
 # Exclude duplicated plates from the ORC2 screen:
-orc <- filter(orc, !str_detect(Plate, "_uthra"))
+#orc <- filter(orc, !str_detect(Plate, "_uthra"))
 
 # Skip one unsuccessful plate from the ORC2 screen:
-orc <- filter(orc, Plate != "170223_3-1x49-71")
+#orc <- filter(orc, Plate != "170223_3-1x49-71")
 
 # Deduplicate on gene names:
 orc <- orc %>% mutate(Name = str_to_upper(Name)) %>% filter(!duplicated(Name))
