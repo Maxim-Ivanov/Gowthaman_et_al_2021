@@ -97,7 +97,7 @@ draw_chipseq_metagenes <- function(data, win1, win2, win3, title) {
   ml3 <- lapply(data, metagene_matrix, intervals = win3, scaling = FALSE, matrix.length = 500, anchor = "start", skip.zeros = FALSE, skip.outliers = FALSE, skip.top.obs = TRUE, shrink = TRUE)
   ml <- mapply(cbind, ml1, ml2, ml3, SIMPLIFY = FALSE)
   ml <- lapply(ml, function(x) { return(x[, seq(ncol(x), 1)]) }) # flip the plot horizontally
-  draw_metagene_plot(ml, x.axis = seq(-199, 150), vline = c(0, 50), title = title, xlabel = "[-1Kb, DNC TSS] (5 bp bins) + [DNC TSS, host TSS] (50 bins) + [host TSS, +500bp] (5 bp bins)", width = 10, height = 8, units = "in")
+  draw_metagene_plot(ml, x.axis = seq(-149, 200), vline = c(-50, 0), title = title, xlabel = "[-1Kb, DNC TSS] (5 bp bins) + [DNC TSS, host TSS] (50 bins) + [host TSS, +500bp] (5 bp bins)", width = 10, height = 8, units = "in")
 }
 
 # Draw SFig. 5A:
